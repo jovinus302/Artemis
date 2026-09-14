@@ -27,7 +27,7 @@ google/artemis `371aa6d` 위에 커밋 1개(`93698ae`)를 적용합니다.
 ## 설치 방법
 
 ```powershell
-cd C:\Users\siheon.ryu\Desktop\workspace\R2P\artemis
+cd <제품 저장소 루트>
 powershell -ExecutionPolicy Bypass -File scripts\setup_artemis_upstream.ps1
 ```
 

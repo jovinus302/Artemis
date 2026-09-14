@@ -91,12 +91,14 @@ if (-not $repoExists) {
     Write-Host "==> $TargetDir already a git repo, skipping clone"
 }
 
+$branchExists = $false
 $branchAlreadyPatched = $false
 if (-not $DryRun -and (Test-Path (Join-Path $TargetDir ".git"))) {
     Push-Location $TargetDir
     try {
         $branchList = git branch --list $BranchName
         if ($branchList) {
+            $branchExists = $true
             $prevEap = $ErrorActionPreference
             $ErrorActionPreference = "Continue"
             $subjects = git log $BranchName --format=%s -n 20
@@ -112,16 +114,18 @@ if (-not $DryRun -and (Test-Path (Join-Path $TargetDir ".git"))) {
 
 if ($branchAlreadyPatched) {
     Write-Host "==> Branch '$BranchName' already exists and contains the patch commit, skipping checkout/am"
+} elseif ($branchExists) {
+    # Branch exists but we could not confirm it already has the patch commit
+    # (e.g. rebased/reworded, or more than 20 commits ahead). Never delete a
+    # branch we can't positively identify as ours — that could destroy the
+    # user's own work.
+    throw "Branch '$BranchName' already exists in $TargetDir but does not appear to contain the patch commit ('$PatchSubject'). Refusing to delete it automatically. Please delete or rename it manually, or pass -TargetDir to use a fresh clone."
 } else {
     Invoke-Step "Checkout $PinnedCommit and create branch $BranchName" {
         Push-Location $TargetDir
         try {
             git checkout $PinnedCommit
             if ($LASTEXITCODE -ne 0) { throw "git checkout $PinnedCommit failed" }
-            $existing = git branch --list $BranchName
-            if ($existing) {
-                git branch -D $BranchName
-            }
             git checkout -b $BranchName
             if ($LASTEXITCODE -ne 0) { throw "git checkout -b $BranchName failed" }
         } finally {
@@ -230,7 +234,11 @@ if ($SkipMcp) {
             $ErrorActionPreference = $prevEap
         }
 
-        if ($existingList -match "artemis-adb") {
+        # `claude mcp list` prints one line per server as "<name>: <command> - <status>".
+        # Anchor on "<name>:" at the start of a line so "artemis" does not also
+        # match the "artemis-adb: ..." line or the "...\artemis-upstream\..."
+        # command path that appears on every registered line.
+        if ($existingList -match "(?m)^artemis-adb:") {
             Write-Host "==> MCP server 'artemis-adb' already registered, skipping"
         } else {
             Invoke-Step "Register MCP server 'artemis-adb' (user scope)" {
@@ -241,7 +249,7 @@ if ($SkipMcp) {
             }
         }
 
-        if ($existingList -match "(?<!-)\bartemis\b") {
+        if ($existingList -match "(?m)^artemis:") {
             Write-Host "==> MCP server 'artemis' already registered, skipping"
         } else {
             Invoke-Step "Register MCP server 'artemis' (user scope)" {
