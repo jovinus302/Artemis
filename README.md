@@ -56,6 +56,34 @@ python -m venv .venv
 - **Phase 2**: Gemini API 키와 실제 Android 기기/에뮬레이터를 확보한 뒤,
   `..\artemis-upstream` 경로에 `google/artemis`를 clone하고 그 저장소의 `.\start.bat`으로
   ARTEMIS 호스트를 띄우면, 같은 툴들이 실제 자동화를 수행합니다.
+
+  ### Gemini API 키 준비
+
+  - Google AI Pro/Ultra 구독은 AI Studio 웹 UI에만 적용되며 API 키 사용에는 적용되지 않습니다
+    (참고: https://ai.google.dev/gemini-api/docs/google-ai-plans). API 키는 별도 무료 티어에서
+    시작합니다.
+  - 무료 키 발급 절차: https://aistudio.google.com/apikey 접속 -> "Create API key" ->
+    발급된 키에 "Unrestricted" 라벨이 붙어 있으면 "Add restrictions"로
+    "Restrict to Gemini API only"를 설정하세요 (2026-09부터 제한 없는(unrestricted) 키는
+    403으로 거부됩니다, 참고: https://ai.google.dev/gemini-api/docs/api-key).
+  - 발급받은 동일한 키 값을 루트 `.env`의 `GOOGLE_API_KEY`(ADK용)와 `GEMINI_API_KEY`(ARTEMIS용)
+    둘 다에 넣으세요.
+  - `.env.example`의 (B) Gemini 섹션에 `GOOGLE_API_KEY` 옆에 `GEMINI_API_KEY` 항목도 있으니
+    같은 값을 채우면 됩니다.
+  - 무료 티어 한도(비공식 측정치: gemini-3.8-flash 기준 분당 5 RPM / 일 20 RPD)로는 ARTEMIS
+    태스크를 끝까지 완주하기 어렵습니다 -> AI Studio에서 "Set up billing"으로 Cloud Billing을
+    연결해 유료 Tier 1로 전환하세요(Vertex AI 프로젝트 설정은 불필요). 예상 비용은 태스크당
+    약 $0.3~3 수준이며 기본 월 사용한도(cap)는 $250입니다. 유료 티어에서는 요청 데이터가
+    모델 학습에 사용되지 않습니다.
+  - 키가 정상 동작하는지 확인하는 PowerShell 예시(값은 환경변수로만 참조하고 화면에 직접
+    찍지 마세요):
+    ```powershell
+    $h = @{ "x-goog-api-key" = $env:GEMINI_API_KEY; "Content-Type" = "application/json" }
+    Invoke-WebRequest -Uri "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent" -Method Post -Headers $h -Body '{"contents":[{"parts":[{"text":"ping"}]}]}' | Select-Object StatusCode
+    ```
+  - 사내 LLM 프록시(`PROXY_MODELS.md` 목록)에는 `gemini-robotics-er-2-preview`가 없어서,
+    프록시만으로는 ARTEMIS의 시각 그라운딩(visual grounding)을 수행할 수 없습니다 -- 이 때문에
+    Gemini API 키를 구글에 직접 연결하는 것이 Phase 2에 필수입니다.
 - **Phase 3**: `ARTEMIS_MCP_ENABLED=true` + `ARTEMIS_REPO_DIR` 설정 시
   ARTEMIS 네이티브 MCP 서버(`mobile_*` 5종)를 `McpToolset`으로 추가 연결할 수 있습니다.
 
