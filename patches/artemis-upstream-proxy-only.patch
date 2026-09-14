@@ -1,0 +1,222 @@
+From 93698ae357769147825484fcfbf8c45042607859 Mon Sep 17 00:00:00 2001
+From: "siheon.ryu" <siheon.ryu@samsung.com>
+Date: Mon, 14 Sep 2026 15:31:50 +0900
+Subject: [PATCH] Route all LLM calls through OpenAI-compatible proxy
+ (proxy-only mode)
+
+Local patches to run ARTEMIS in a network where direct Google/OpenAI/
+Anthropic API hosts are blocked and only an internal LiteLLM proxy is
+reachable (OPENAI_BASE_URL). No Gemini/Google API key is required.
+
+- config/artemis.jsonc: switch default, object_detector, hopper,
+  flash.step_summarizer and memory.chunking to provider "openai",
+  model "gemini/gemini-3.5-flash" (served by the proxy).
+- artemis/config/llm.py: lightweight_judge_default() and the no-config
+  fallback in _expand_default_into_nodes were hardcoded to provider
+  "google"; use "openai" so Pro-mode judges also follow the proxy.
+- artemis/agents/flash/summarizer.py, artemis/agents/flash/runner.py,
+  artemis/memory/chunking.py: these called get_google_llm() directly,
+  bypassing the jsonc model configuration entirely (upstream bug).
+  Repointed to get_openai_llm() so the configured provider is honored.
+
+Verified on a Galaxy S26 Ultra via the MCP server: mobile_run_task
+completes with all requests going to the proxy and zero calls to
+googleapis.com.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+---
+ artemis/agents/flash/runner.py     |  6 ++++--
+ artemis/agents/flash/summarizer.py |  6 +++---
+ artemis/config/llm.py              | 16 ++++++++--------
+ artemis/memory/chunking.py         |  8 ++++----
+ config/artemis.jsonc               | 28 ++++++++++++++++------------
+ 5 files changed, 35 insertions(+), 29 deletions(-)
+
+diff --git a/artemis/agents/flash/runner.py b/artemis/agents/flash/runner.py
+index 936f606..6b2aed0 100644
+--- a/artemis/agents/flash/runner.py
++++ b/artemis/agents/flash/runner.py
+@@ -83,8 +83,8 @@ from artemis.memory.transcript import PRO_UI_LIST_MARKER, TranscriptLedger, mark
+ from artemis.services.llm import (
+     RobustChatModelWrapper,
+     acomplete,
+-    get_google_llm,
+     get_llm,
++    get_openai_llm,
+     invoke_llm_with_timeout_message,
+ )
+ from artemis.tools.history import history_tool_declarations
+@@ -284,7 +284,9 @@ class FlashRunner:
+         except Exception as e:
+             logger.warning(f"Failed to get operator LLM from config, using default: {e}")
+ 
+-            return RobustChatModelWrapper(get_google_llm(model_name="gemini-2.5-flash"), self.ctx)
++            return RobustChatModelWrapper(
++                get_openai_llm(model_name="gemini/gemini-3.5-flash"), self.ctx
++            )
+ 
+     def _render_system_prompt(self, tools_declaration: list) -> str:
+         """Renders the system prompt from the flash_runner.md template.
+diff --git a/artemis/agents/flash/summarizer.py b/artemis/agents/flash/summarizer.py
+index 56c5e09..91873c6 100644
+--- a/artemis/agents/flash/summarizer.py
++++ b/artemis/agents/flash/summarizer.py
+@@ -36,7 +36,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+ 
+ from artemis.context import ArtemisContext
+ from artemis.memory.step_memory import JobKey, StepMemoryService
+-from artemis.services.llm import RobustChatModelWrapper, get_google_llm, get_llm
++from artemis.services.llm import RobustChatModelWrapper, get_llm, get_openai_llm
+ from artemis.services.token_meter import record_llm_usage
+ from artemis.utils.logger import get_logger
+ from artemis.utils.task_tree import format_actions_clean
+@@ -166,11 +166,11 @@ class VisualStepSummarizer(StepMemoryService):
+         self._model_name = target_model
+         try:
+             if model_name:
+-                self._llm = get_google_llm(model_name=target_model, temperature=0.0)
++                self._llm = get_openai_llm(model_name=target_model, temperature=0.0)
+             else:
+                 self._llm = get_llm(ctx, name="summarizer", is_utils=True)
+         except Exception:
+-            self._llm = get_google_llm(model_name=target_model, temperature=0.0)
++            self._llm = get_openai_llm(model_name=target_model, temperature=0.0)
+         try:
+             configured = getattr(self._llm, "model", None) or getattr(self._llm, "model_name", None)
+             if isinstance(configured, str) and configured:
+diff --git a/artemis/config/llm.py b/artemis/config/llm.py
+index 36915dd..9632d2b 100644
+--- a/artemis/config/llm.py
++++ b/artemis/config/llm.py
+@@ -120,12 +120,12 @@ def lightweight_judge_default() -> "LLMWithFallback":
+     """Factory default for the lightweight judge nodes (pixel safety net and
+     planner validation): a flash-lite model at temperature 0."""
+     return LLMWithFallback(
+-        provider="google",
+-        model="gemini-3.5-flash-lite",
++        provider="openai",
++        model="gemini/gemini-3.5-flash",
+         temperature=0.0,
+         fallback=LLM(
+-            provider="google",
+-            model="gemini-3.1-flash-lite",
++            provider="openai",
++            model="gemini/gemini-3.5-flash",
+             temperature=0.0,
+         ),
+     )
+@@ -236,11 +236,11 @@ def _expand_default_into_nodes(config_dict: dict) -> dict:
+     default_model_cfg = config_dict.get(
+         "default",
+         {
+-            "provider": "google",
+-            "model": "gemini-3.8-flash",
++            "provider": "openai",
++            "model": "gemini/gemini-3.5-flash",
+             "fallback": {
+-                "provider": "google",
+-                "model": "gemini-3.7-flash",
++                "provider": "openai",
++                "model": "gemini/gemini-3.5-flash",
+             },
+         },
+     )
+diff --git a/artemis/memory/chunking.py b/artemis/memory/chunking.py
+index 4e56454..085a775 100644
+--- a/artemis/memory/chunking.py
++++ b/artemis/memory/chunking.py
+@@ -323,16 +323,16 @@ class StepCapsuleLens(StepLens):
+ 
+     def _get_llm(self):
+         if self._llm is None:
+-            from artemis.services.llm import get_google_llm
++            from artemis.services.llm import get_openai_llm
+ 
+-            self._llm = get_google_llm(model_name=self._model_name, temperature=0.0)
++            self._llm = get_openai_llm(model_name=self._model_name, temperature=0.0)
+         return self._llm
+ 
+     def _get_fallback_llm(self):
+         if self._fallback_llm is None and self._fallback_model_name:
+-            from artemis.services.llm import get_google_llm
++            from artemis.services.llm import get_openai_llm
+ 
+-            self._fallback_llm = get_google_llm(
++            self._fallback_llm = get_openai_llm(
+                 model_name=self._fallback_model_name, temperature=0.0
+             )
+         return self._fallback_llm
+diff --git a/config/artemis.jsonc b/config/artemis.jsonc
+index 517d738..3f1cb33 100644
+--- a/config/artemis.jsonc
++++ b/config/artemis.jsonc
+@@ -7,12 +7,12 @@
+   // 1. Global Default Model (Applied to all sub-agents unless overridden below)
+   // ------------------------------------------------------------------------------
+   "default": {
+-    "provider": "google",
+-    "model": "gemini-3.8-flash",
++    "provider": "openai",
++    "model": "gemini/gemini-3.5-flash",
+     "thinking_level": "medium",
+     "fallback": {
+-      "provider": "google",
+-      "model": "gemini-3.7-flash",
++      "provider": "openai",
++      "model": "gemini/gemini-3.5-flash",
+       "thinking_level": "medium"
+     }
+   },
+@@ -75,10 +75,11 @@
+     // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
+     // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
+     "object_detector": {
+-      "model": "gemini-robotics-er-2-preview",
++      "provider": "openai",
++      "model": "gemini/gemini-3.5-flash",
+       "fallback": {
+-        "provider": "google",
+-        "model": "gemini-robotics-er-2-preview"
++        "provider": "openai",
++        "model": "gemini/gemini-3.5-flash"
+       }
+     },
+ 
+@@ -95,10 +96,11 @@
+ 
+     // 🔽 Hopper: Fast lightweight package name locator
+     "hopper": {
+-      "model": "gemini-3.5-flash-lite",
++      "provider": "openai",
++      "model": "gemini/gemini-3.5-flash",
+       "fallback": {
+-        "provider": "google",
+-        "model": "gemini-3.1-flash-lite"
++        "provider": "openai",
++        "model": "gemini/gemini-3.5-flash"
+       }
+     },
+ 
+@@ -145,7 +147,8 @@
+       // replacing images only after strictly objective, high-density summaries are ready.
+       "step_summarizer": {
+         "enabled": true, // Whether background step summarization is active
+-        "model": "gemini-3.5-flash-lite", // Lightweight model for fast background inference
++        "provider": "openai", // Lightweight model for fast background inference
++        "model": "gemini/gemini-3.5-flash",
+         "prune_history_xml": true // Prune outdated heavy XML trees from historical steps
+       }
+     },
+@@ -246,7 +249,8 @@
+         // call each); milestone closes are exempt, the hard line waives it.
+         "min_steps": 3,
+         "target_source_tokens": 2000,
+-        "model": "gemini-3.8-flash",
++        "provider": "openai",
++        "model": "gemini/gemini-3.5-flash",
+         "max_chunks": 8
+         // "max_eras": 8 // independent era cap; omitted = follows max_chunks
+       },
+-- 
+2.54.0.windows.1
+

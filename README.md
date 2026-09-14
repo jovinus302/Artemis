@@ -56,6 +56,8 @@ python -m venv .venv
 - **Phase 2**: Gemini API 키와 실제 Android 기기/에뮬레이터를 확보한 뒤,
   `..\artemis-upstream` 경로에 `google/artemis`를 clone하고 그 저장소의 `.\start.bat`으로
   ARTEMIS 호스트를 띄우면, 같은 툴들이 실제 자동화를 수행합니다.
+  (사내망에서 Gemini API 직결 없이 개발용으로만 돌리고 싶다면
+  `docs/artemis-upstream-proxy-only.md`의 proxy-only 셋업을 참고하세요.)
 
   ### Gemini API 키 준비
 
