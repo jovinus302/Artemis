@@ -31,6 +31,19 @@ def test_build_model_gemini_backend(monkeypatch):
     assert isinstance(model, str)
 
 
+def test_build_model_auto_prefers_anthropic_when_both_keys_present(monkeypatch):
+    # Corporate network blocks direct Google API calls at the TLS handshake,
+    # so auto mode must prefer the Anthropic-compatible proxy whenever an
+    # ANTHROPIC_API_KEY is present, even if a GEMINI_API_KEY is also set.
+    monkeypatch.setenv("ADK_MODEL_BACKEND", "auto")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    from google.adk.models.anthropic_llm import AnthropicLlm
+
+    model = build_model()
+    assert isinstance(model, AnthropicLlm)
+
+
 def test_artemis_health_reports_error_without_host(monkeypatch):
     # Port 1 is a closed/unreachable port, so the client fails fast.
     monkeypatch.setenv("ARTEMIS_BASE_URL", "http://127.0.0.1:1")

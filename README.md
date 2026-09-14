@@ -87,6 +87,34 @@ python -m venv .venv
 - **Phase 3**: `ARTEMIS_MCP_ENABLED=true` + `ARTEMIS_REPO_DIR` 설정 시
   ARTEMIS 네이티브 MCP 서버(`mobile_*` 5종)를 `McpToolset`으로 추가 연결할 수 있습니다.
 
+## 네트워크 제약 (사내망)
+
+- 사내망에서는 Google/Anthropic/OpenAI 등 외부 API 엔드포인트에 직접 연결하는 경로가
+  TLS 핸드셰이크 단계에서 차단됩니다(DNS 조회와 TCP 연결(SYN/ACK)까지는 성공하지만,
+  그 다음 TLS handshake에서 끊깁니다). 사내 LiteLLM 프록시(`ANTHROPIC_BASE_URL` 경유)만
+  통과 가능합니다.
+- 확인 방법 예시:
+  ```powershell
+  curl -sS -o NUL -w "%{http_code}" https://generativelanguage.googleapis.com/
+  ```
+  이 명령이 curl exit code 35(SSL connect error)로 실패하면 차단된 것입니다.
+- 따라서 **Phase 2(ARTEMIS 실제 런타임)는 사내망에서 바로 동작하지 않습니다.** ARTEMIS
+  자체가 화면 그라운딩에 `gemini-robotics-er-2-preview` 모델을 하드코딩해서 Gemini API에
+  직접 연결하며(별도의 base_url 오버라이드 옵션이 없습니다), 이 연결이 사내망에서
+  차단되기 때문입니다. `.env`에 `GEMINI_API_KEY`를 넣어 두어도 사내망 안에서는 그 키가
+  유효한지조차 검증할 수 없습니다(요청 자체가 TLS 단계에서 도달하지 못합니다).
+- Phase 2를 실제로 진행하려면 다음 세 가지 중 하나가 필요합니다.
+  1. 네트워크팀에 `generativelanguage.googleapis.com` 아웃바운드 허용을 요청한다.
+  2. 사내 프록시 관리자에게 `gemini-robotics-er-2-preview` 등 ER(Element Recognition)
+     모델 추가를 요청하고, ARTEMIS 쪽 소스에 base_url 오버라이드 패치를 적용한다.
+  3. 사내망 밖의 호스트에서 ARTEMIS 호스트(daemon)를 띄우고, 이 저장소의
+     `ARTEMIS_BASE_URL`을 그 원격 주소로 지정해 `artemis-client`(HTTP 기반 SDK)로
+     원격 연결한다. artemis-client는 HTTP 기반이라 구조상 이 방식이 가능합니다.
+- 이 저장소의 기본값(`ADK_MODEL_BACKEND=auto`)은 이런 사내망 제약을 감안해,
+  `ANTHROPIC_API_KEY`가 있으면 `GEMINI_API_KEY`/`GOOGLE_API_KEY`가 함께 있어도 항상
+  anthropic(프록시) 경로를 우선합니다. 자세한 내용은
+  `agents/artemis_agent/model.py`의 `_backend()` 주석을 참고하세요.
+
 ## 주의사항
 
 - **ARTEMIS는 Gemini API 키가 사실상 필수입니다** — 화면 그라운딩(Grounding)이 Gemini의
